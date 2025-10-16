@@ -1,0 +1,17 @@
+# Dune build directory
+_build/
+
+# Local opam switch (if used within the project directory)
+_opam/
+
+# OCaml editor/IDE files
+.merlin
+.ocamlformat
+.ocamlformat-ignore
+
+# Temporary files and logs
+*.log
+*~
+.#*
+*.opam
+*.o

@@ -1,0 +1,7 @@
+(executable
+  (name gc)
+  (libraries streadmilla)
+  (foreign_stubs
+    (language c) (names gc) (flags -I.))
+  (flags :standard -linkall)
+  (modes (native shared_object)))
