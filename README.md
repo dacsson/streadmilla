@@ -34,4 +34,4 @@ Well, my initial intent is to implement a treadmill GC algorithm.
 
 ## Reference
 
-[https://trout.me.uk/gc/treadmill.pdf](The Treadmill: Real-Time Garbage Collection Without Motion Sickness, Henry G. Baker)
+[The Treadmill: Real-Time Garbage Collection Without Motion Sickness, Henry G. Baker](https://trout.me.uk/gc/treadmill.pdf)
