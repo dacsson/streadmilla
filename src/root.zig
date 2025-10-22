@@ -1,4 +1,5 @@
-//! By convention, root.zig is the root source file when making a library.
+//! C glue code, exposing GC environment
+
 const std = @import("std");
 
 const runtime = @cImport({
@@ -6,6 +7,7 @@ const runtime = @cImport({
 });
 
 const gc = @import("gc.zig");
+const util = @import("util.zig");
 
 //###==============================###
 //
@@ -15,6 +17,7 @@ const gc = @import("gc.zig");
 // rules for globals, we need
 // to call `gc_env` on each call
 // to make sure it's initialized
+// (either that, or i am dumb)
 //
 //###==============================###
 
@@ -28,15 +31,11 @@ fn get_env() !*gc.GCEnv {
     if (env) |e| return e;
     const allocator = std.heap.page_allocator;
 
-    // 1 MiB buffer for the GC.
-    const buffer = try allocator.alloc(u8, 1024 * 1024);
-    const roots = gc.List(**void).init(allocator);
-
     // Allocate ENV
     const gc_ptr = try allocator.create(gc.GCEnv);
 
     // Initialise ENV
-    gc_ptr.* = try gc.GCEnv.init(buffer, roots);
+    gc_ptr.* = try gc.GCEnv.init();
 
     // Store the pointer in global
     env = gc_ptr;
@@ -54,31 +53,50 @@ export fn gc_push_root(object: **void) void {
     var gc_env = get_env() catch {
         @panic("Cannot initialize environment");
     };
-    std.debug.print("Zig: gc_push_root\n", .{});
-    gc_env.roots.append(object) catch unreachable;
+    util.dbgs("Zig: gc_push_root {*}\n", .{object});
+
+    gc_env.push_root(object) catch unreachable;
 }
 
 export fn gc_alloc(size: usize) *void {
     var gc_env = get_env() catch {
         @panic("Cannot initialize environment");
     };
-    std.debug.print("Zig: gc_alloc {d}\n", .{size});
+    util.dbgs("Zig: gc_alloc {d}\n", .{size});
     const slice = gc_env.alloc(size) catch unreachable;
     return @ptrCast(slice);
 }
 
 export fn gc_read_barrier(object: *void, field_index: i32) void {
-    std.debug.print("Zig: gc_read_barrier {*} {d}\n", .{ object, field_index });
+    util.dbgs("Zig: gc_read_barrier {*} {d}\n", .{ object, field_index });
 }
 
 export fn gc_write_barrier(object: *void, field_index: i32, content: *void) void {
-    std.debug.print("Zig: gc_write_barrier {*} {d} {*}\n", .{ object, field_index, content });
+    util.dbgs("Zig: gc_write_barrier {*} {d} {*}\n", .{ object, field_index, content });
 }
 
 export fn gc_pop_root(object: **void) void {
-    std.debug.print("Zig: gc_pop_root {*}\n", .{object});
+    var gc_env = get_env() catch {
+        @panic("Cannot initialize environment");
+    };
+    util.dbgs("Zig: gc_pop_root {*}\n", .{object});
+    _ = gc_env.pop_root(object) catch unreachable;
 }
 
 export fn not_implemented() void {
-    std.debug.print("Zig: Not implemented\n", .{});
+    util.dbgs("Zig: Not implemented\n", .{});
+}
+
+//###==============================###
+//
+// Debug and statistics utility
+//
+//###==============================###
+
+export fn print_gc_alloc_stats() void {
+    var gc_env = get_env() catch {
+        @panic("Cannot initialize environment");
+    };
+    util.dbgs("Zig: print_gc_alloc_stats\n", .{});
+    gc_env.statistics.print();
 }

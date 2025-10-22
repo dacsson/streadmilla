@@ -23,11 +23,16 @@ make FILE=<file_name>.stella
 
 and then run it:
 ```
-./<file_name>
+./build/<file_name>
 ```
 
 > [!NOTE]
 > Default build directory is `$(pwd)/build/`
+
+Optionally you can set debug and statistics flags like this:
+```
+make FILE=<file_name>.stella DEBUG=1 GS_STATS=1 RT_STATS=1
+```
 
 Essentially it does three things:
 1. `zig build` to build a library, that exports the `gc` function for C, obeying by `gc.h` interface (all runtime dependencies (*.c and *.h) are in `stella/` directory)
