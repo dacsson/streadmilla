@@ -52,7 +52,7 @@ test:
 	@echo "🧪 Running tests..."
 	@for file in $(wildcard test-stella/*.stella); do \
 		echo "🧪 Running test: $$file"; \
-		make FILE=$$file; \
+		make FILE=$$file GC_STATS=1 RT_STATS=1; \
 		echo 10 | ./build/$$(basename $$file .stella); \
 		make clean; \
 	done
