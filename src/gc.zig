@@ -26,6 +26,7 @@ pub const GCEnv = struct {
     blocks: List(mem.MemoryBlock),
     /// Next free index in memory buffer
     next_free: usize,
+    free_list: List(*mem.MemoryBlock),
     allocator: std.mem.Allocator,
     statistics: stats.Statistics,
 
@@ -38,6 +39,7 @@ pub const GCEnv = struct {
             .roots = List(Root).empty,
             .blocks = List(mem.MemoryBlock).empty,
             .next_free = 0,
+            .free_list = List(*mem.MemoryBlock).empty,
             .allocator = allocator,
             .statistics = stats.Statistics{},
         };
@@ -47,11 +49,24 @@ pub const GCEnv = struct {
     /// Returns a slice of the allocated memory (which points
     /// to memory of gc env) you should take a pointer to it.
     pub fn alloc(self: *GCEnv, size: usize) ![]u8 {
+        if (self.free_list.items.len != 0) {
+            const block = self.free_list.pop() orelse unreachable;
+            self.statistics.allocated_memory += size;
+            self.next_free = block.start + size;
+            // const data = self.memory.items[block.id];
+            // Reallocate memory
+            self.memory.items[block.id] = try self.allocator.alloc(u8, size);
+            // try self.memory.append(self.allocator, data);
+            self.statistics.allocated_objects += 1;
+            return self.memory.items[block.id];
+        }
+
         // TODO: align
         const start = std.mem.alignForward(usize, self.next_free, 8);
         if (start + size > self.memory.capacity) return error.OutOfMemory;
 
         self.statistics.allocated_memory += size;
+        self.statistics.allocated_objects += 1;
 
         self.next_free = start + size;
 
@@ -130,13 +145,13 @@ pub const GCEnv = struct {
     }
 
     pub fn print_heap(self: *GCEnv) void {
-        std.debug.print("Heap:\n", .{});
+        util.dbgs("Heap:\n", .{});
         for (self.blocks.items) |*block| {
-            std.debug.print("| Start {d}, Size {d} ", .{ block.start, block.size });
+            util.dbgs("| Start {d}, Size {d} ", .{ block.start, block.size });
         }
         // for (self.memory) |byte| {
         //     std.debug.print("{x} ", .{byte});
         // }
-        std.debug.print("\n", .{});
+        util.dbgs("\n", .{});
     }
 };

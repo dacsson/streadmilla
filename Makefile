@@ -14,7 +14,7 @@ ZIG_FLAGS := $(UNDEF)
 ifeq ($(DEBUG),1)
 	ZIG_FLAGS += -Ddebug=true
 else
-	ZIG_FLAGS += --release=safe
+	ZIG_FLAGS += --release=fast
 endif
 
 ifeq ($(GC_STATS),1)
@@ -47,6 +47,8 @@ $(BIN_NAME): %.stella
 
 # Build and run all *.stella files in `test-stella`
 test:
+	@echo "🛠  Fetching dependencies..."
+	zig fetch --save git+https://github.com/ziglang/translate-c
 	@echo "🧪 Running tests..."
 	@for file in $(wildcard test-stella/*.stella); do \
 		echo "🧪 Running test: $$file"; \
