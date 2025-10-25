@@ -2,12 +2,13 @@
 
 const std = @import("std");
 
-const runtime = @cImport({
-    @cInclude("runtime.h");
-});
+// const runtime = @cImport({
+//     @cInclude("runtime.h");
+// });
 
 const gc = @import("gc.zig");
 const util = @import("util.zig");
+const collector = @import("collector.zig");
 
 //###==============================###
 //
@@ -63,6 +64,15 @@ export fn gc_alloc(size: usize) *void {
         @panic("Cannot initialize environment");
     };
     util.dbgs("Zig: gc_alloc {d}\n", .{size});
+
+    gc_env.print_heap();
+    if (gc_env.next_free >= gc_env.memory.len) {
+        util.dbgs("[gc_alloc] Starting garbage collection\n", .{});
+        // std.process.exit(0);
+        collector.mark(gc_env) catch unreachable;
+        collector.sweep(gc_env) catch unreachable;
+    }
+
     const slice = gc_env.alloc(size) catch unreachable;
     return @ptrCast(slice);
 }

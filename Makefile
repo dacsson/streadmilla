@@ -1,5 +1,7 @@
 .PHONY: all clean
 
+# TODO: zig fetch --save git+https://github.com/ziglang/translate-c
+
 BUILD_DIR := $(CURDIR)/build
 
 BIN_NAME := $(notdir $(basename $(FILE)))
@@ -12,7 +14,7 @@ ZIG_FLAGS := $(UNDEF)
 ifeq ($(DEBUG),1)
 	ZIG_FLAGS += -Ddebug=true
 else
-	ZIG_FLAGS += --release=safe
+	ZIG_FLAGS += --release=small
 endif
 
 ifeq ($(GC_STATS),1)
@@ -50,6 +52,7 @@ test:
 		echo "🧪 Running test: $$file"; \
 		make FILE=$$file; \
 		echo 10 | ./build/$$(basename $$file .stella); \
+		make clean; \
 	done
 
 # Clean target

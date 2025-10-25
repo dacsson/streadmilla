@@ -1,3 +1,5 @@
+//! Statistics for garbage collection
+
 const std = @import("std");
 
 pub const Statistics = struct {
