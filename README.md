@@ -14,7 +14,7 @@ Then check your version with `zig version`:
 0.16.0-dev.747+493ad58ff
 ```
 
-It also depends on `translate_c` library of zig. Just for the sheer fact that *during this project I found an [actual bug](https://github.com/ziglang/translate-c/issues/211) in it*. Mind you, that is an official part of zig std/build system. Cool!
+It also depends on `translate_c` library of zig. Just for the sheer fact that *during this project I found an [actual bug](https://github.com/ziglang/translate-c/issues/211) in it*. Mind you, that is an official part of zig std/build system. Cool! The need for a dependency is because I had to make my work-around for it.
 
 ## Running
 

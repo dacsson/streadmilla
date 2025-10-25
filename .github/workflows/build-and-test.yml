@@ -13,12 +13,15 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - uses: mlugg/setup-zig@v2  
+    - uses: mlugg/setup-zig@v2
       with:
         version: 0.16.0-dev.747+493ad58ff
-      
+
     - name: Install dependencies
       run: make
 
-    - name: Run tests
+    - name: Run vanilla tests
       run: make test
+
+    - name: Run valgrind tests
+      run: make test-valgrind
