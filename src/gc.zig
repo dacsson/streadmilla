@@ -19,7 +19,7 @@ pub const Root = struct {
 /// Owns memory
 pub const GCEnv = struct {
     /// Memory buffer to send chunks from
-    memory: []u8,
+    memory: List([]u8),
     /// Current roots
     roots: List(Root),
     /// Metadata tracking of memory blocks
@@ -34,7 +34,7 @@ pub const GCEnv = struct {
         const allocator = std.heap.page_allocator;
 
         return GCEnv{
-            .memory = allocator.alloc(u8, 1024) catch unreachable,
+            .memory = try std.ArrayList([]u8).initCapacity(allocator, 1024),
             .roots = List(Root).empty,
             .blocks = List(mem.MemoryBlock).empty,
             .next_free = 0,
@@ -49,7 +49,7 @@ pub const GCEnv = struct {
     pub fn alloc(self: *GCEnv, size: usize) ![]u8 {
         // TODO: align
         const start = std.mem.alignForward(usize, self.next_free, 8);
-        if (start + size > self.memory.len) return error.OutOfMemory;
+        if (start + size > self.memory.capacity) return error.OutOfMemory;
 
         self.statistics.allocated_memory += size;
 
@@ -62,14 +62,22 @@ pub const GCEnv = struct {
             },
             .start = start,
             .size = size,
+            .id = self.blocks.items.len,
         };
         try self.blocks.append(self.allocator, block);
 
-        return self.memory[start..][0..size];
+        // const item = ;
+        const data = try self.allocator.alloc(u8, size);
+        try self.memory.append(self.allocator, data);
+        // self.memory.items[block.id] = data;
+
+        return data;
     }
 
     pub fn find_owner(self: *GCEnv, object: *void) !?*mem.MemoryBlock {
+        util.dbgs(" [find_owner] Checking object: {d} \n", .{@intFromPtr(object)});
         for (self.blocks.items) |*block| {
+            util.dbgs(" [find_owner] Checking block: {d} \n", .{@intFromPtr(block)});
             if (block.does_own(&self.memory, object)) {
                 return block;
             }
@@ -96,7 +104,7 @@ pub const GCEnv = struct {
 
     pub fn pop_root(self: *GCEnv, object: **void) !void {
         for (self.roots.items, 0..) |root, i| {
-            // util.dbgs("[pop_root] Checking root: {d} vs {d} \n", .{ @intFromPtr(root.object), @intFromPtr(object) });
+            util.dbgs("[pop_root] Checking root: {d} vs {d} \n", .{ @intFromPtr(root.object), @intFromPtr(object) });
             if (@intFromPtr(root.object) == @intFromPtr(object)) {
                 _ = self.roots.orderedRemove(i);
                 return;

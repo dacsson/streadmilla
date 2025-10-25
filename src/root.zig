@@ -66,7 +66,8 @@ export fn gc_alloc(size: usize) *void {
     util.dbgs("Zig: gc_alloc {d}\n", .{size});
 
     gc_env.print_heap();
-    if (gc_env.next_free >= gc_env.memory.len) {
+    // TODO: capacity or len ?
+    if (gc_env.next_free >= gc_env.memory.capacity) {
         util.dbgs("[gc_alloc] Starting garbage collection\n", .{});
         // std.process.exit(0);
         collector.mark(gc_env) catch unreachable;

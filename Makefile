@@ -14,7 +14,7 @@ ZIG_FLAGS := $(UNDEF)
 ifeq ($(DEBUG),1)
 	ZIG_FLAGS += -Ddebug=true
 else
-	ZIG_FLAGS += --release=small
+	ZIG_FLAGS += --release=safe
 endif
 
 ifeq ($(GC_STATS),1)
