@@ -128,10 +128,6 @@ pub const GCEnv = struct {
         return error.NotFound;
     }
 
-    // pub fn read_barrier(self: *GCEnv, object: *void, field_index: i32) !void {
-    //     const stella_object =
-    // }
-
     /// Given an index of data in heap, returns
     /// the corresponding memory block.
     pub fn block_at(self: *GCEnv, index: usize) !*mem.MemoryBlock {
@@ -149,9 +145,7 @@ pub const GCEnv = struct {
         for (self.blocks.items) |*block| {
             util.dbgs("| Start {d}, Size {d} ", .{ block.start, block.size });
         }
-        // for (self.memory) |byte| {
-        //     std.debug.print("{x} ", .{byte});
-        // }
+
         util.dbgs("\n", .{});
     }
 };
