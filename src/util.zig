@@ -1,5 +1,8 @@
+//! Utility functions and constants
+
 const std = @import("std");
 const builtin = @import("builtin");
+const mem = @import("memory.zig");
 
 const DEBUG = builtin.mode == .Debug;
 

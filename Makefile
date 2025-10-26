@@ -1,5 +1,7 @@
 .PHONY: all clean
 
+# TODO: zig fetch --save git+https://github.com/ziglang/translate-c
+
 BUILD_DIR := $(CURDIR)/build
 
 BIN_NAME := $(notdir $(basename $(FILE)))
@@ -12,7 +14,7 @@ ZIG_FLAGS := $(UNDEF)
 ifeq ($(DEBUG),1)
 	ZIG_FLAGS += -Ddebug=true
 else
-	ZIG_FLAGS += --release=safe
+	ZIG_FLAGS += --release=fast
 endif
 
 ifeq ($(GC_STATS),1)
@@ -45,11 +47,29 @@ $(BIN_NAME): %.stella
 
 # Build and run all *.stella files in `test-stella`
 test:
+	@echo "🛠  Fetching dependencies..."
+	zig fetch --save git+https://github.com/ziglang/translate-c
+	@echo "🧪 Running tests..."
+	@for file in $(wildcard test-stella/*.stella); do \
+		echo "🧪 Running test: $$file"; \
+		make FILE=$$file GC_STATS=1 RT_STATS=1; \
+		echo 2 | ./build/$$(basename $$file .stella); \
+		echo 5 | ./build/$$(basename $$file .stella); \
+		echo 10 | ./build/$$(basename $$file .stella); \
+		make clean; \
+	done
+
+test-valgrid:
+	@echo "🛠  Fetching dependencies..."
+	zig fetch --save git+https://github.com/ziglang/translate-c
 	@echo "🧪 Running tests..."
 	@for file in $(wildcard test-stella/*.stella); do \
 		echo "🧪 Running test: $$file"; \
 		make FILE=$$file; \
-		echo 10 | ./build/$$(basename $$file .stella); \
+		echo 2 | valgrind --leak-check=full --show-leak-kinds=all ./build/$$(basename $$file .stella); \
+		echo 5 | valgrind --leak-check=full --show-leak-kinds=all ./build/$$(basename $$file .stella); \
+		echo 10 | valgrind --leak-check=full --show-leak-kinds=all ./build/$$(basename $$file .stella); \
+		make clean; \
 	done
 
 # Clean target
@@ -62,6 +82,8 @@ help:
 	@echo "Usage: make FILE=<filename.c>"
 	@echo "  FILE=<filename.c>  The C source file to compile"
 	@echo "  make clean         Remove generated library"
+	@echo "  make test          Run all tests (build and boot files with GC_STATS)"
+	@echo "  make test-valgrid  Run all tests with valgrind"
 	@echo "  make help          Show this help"
 
 # Default help if no target specified
