@@ -28,7 +28,10 @@ var env: ?*gc.GCEnv = null;
 /// Returns the global GC environment
 /// or initializes it if it hasn't been (on heap)
 fn get_env() !*gc.GCEnv {
-    if (env) |e| return e;
+    if (env) |e| {
+        e.check_roots();
+        return e;
+    }
     const allocator = std.heap.page_allocator;
 
     // Allocate ENV
@@ -68,6 +71,10 @@ export fn gc_alloc(size: usize) *void {
 }
 
 export fn gc_read_barrier(object: *void, field_index: i32) void {
+    var gc_env = get_env() catch {
+        @panic("Cannot initialize environment");
+    };
+    gc_env.read_barrier(object);
     util.dbgs("Zig: gc_read_barrier {*} {d}\n", .{ object, field_index });
 }
 

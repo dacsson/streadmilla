@@ -12,7 +12,7 @@ ZIG_FLAGS := $(UNDEF)
 ifeq ($(DEBUG),1)
 	ZIG_FLAGS += -Ddebug=true
 else
-	ZIG_FLAGS += --release=safe
+	ZIG_FLAGS += --release=small
 endif
 
 ifeq ($(GC_STATS),1)
@@ -24,7 +24,7 @@ ifeq ($(RT_STATS),1)
 endif
 
 
-all: $(BIN_NAME)
+all: clean $(BIN_NAME)
 
 # Build the Zig library
 zig-out/lib/libstreadmilla.a:

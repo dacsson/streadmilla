@@ -1,6 +1,7 @@
 const std = @import("std");
 const stats = @import("stats.zig");
 const mem = std.mem;
+const clctr = @import("collector.zig");
 
 pub const List = std.ArrayList;
 
@@ -15,6 +16,7 @@ pub const GCEnv = struct {
     next_free: usize,
     allocator: std.mem.Allocator,
     statistics: stats.Statistics,
+    collector: *clctr.Collector,
 
     /// Initialize a new garbage collector environment.
     pub fn init() !GCEnv {
@@ -26,6 +28,7 @@ pub const GCEnv = struct {
             .next_free = 0,
             .allocator = allocator,
             .statistics = stats.Statistics{},
+            .collector = try clctr.Collector.init(),
         };
     }
 
@@ -33,18 +36,26 @@ pub const GCEnv = struct {
     /// Returns a slice of the allocated memory (which points
     /// to memory of gc env) you should take a pointer to it.
     pub fn alloc(self: *GCEnv, size: usize) ![]u8 {
-        // TODO: align
-        const start = std.mem.alignForward(usize, self.next_free, 8);
-        if (start + size > self.memory.len) return error.OutOfMemory;
+        const obj = try self.collector.alloca(size);
+        self.collector.print();
+        return obj;
+        // // TODO: align
+        // const start = std.mem.alignForward(usize, self.next_free, 8);
+        // if (start + size > self.memory.len) return error.OutOfMemory;
 
-        self.statistics.allocated_memory += size;
+        // self.statistics.allocated_memory += size;
 
-        self.next_free = start + size;
-        return self.memory[start..][0..size];
+        // self.next_free = start + size;
+        // return self.memory[start..][0..size];
     }
 
     pub fn push_root(self: *GCEnv, object: **void) !void {
+        self.collector.queue_roots(object);
         try self.roots.append(self.allocator, object);
+    }
+
+    pub fn read_barrier(self: *GCEnv, object: *void) void {
+        self.collector.read_barrier(object);
     }
 
     pub fn pop_root(self: *GCEnv, object: **void) !**void {
@@ -54,5 +65,9 @@ pub const GCEnv = struct {
             }
         }
         return error.NotFound;
+    }
+
+    pub fn check_roots(self: *GCEnv) void {
+        self.collector.check_roots();
     }
 };
