@@ -57,5 +57,20 @@ pub fn field_at(self: collector.StellaObjectPtr, index: usize) ?collector.Stella
     if (index >= count) {
         return null;
     }
-    return void_to_stella_object(@ptrCast(fields[index]));
+    if (fields[index] == null) return null;
+    return void_to_stella_object(@ptrCast(fields[index].?));
+}
+
+pub fn node_distance(node: *std.DoublyLinkedList.Node, other: *std.DoublyLinkedList.Node) usize {
+    var current = node;
+    var distance: usize = 0;
+    while (@intFromPtr(current) != @intFromPtr(other)) {
+        current = current.next orelse break;
+        distance += 1;
+        if (distance > 1024) {
+            dbgs("Error: Maximum distance exceeded for {*} and {*} \n", .{ current, other });
+            @panic("Maximum distance exceeded");
+        }
+    }
+    return distance;
 }

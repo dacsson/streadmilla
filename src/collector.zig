@@ -32,25 +32,35 @@ pub const GCObject = struct {
         return util.field_count(self.data().?);
     }
 
-    pub fn field_at(self: *GCObject, index: usize) ?*GCObject {
+    pub fn field_at(self: *GCObject, index: usize, map: *std.AutoHashMap(**void, *GCObject)) ?*GCObject {
+        util.dbgs("\n [field_at] \n", .{});
         if (self.data() == null) return null;
 
         // Search for the GCObject that owns
         // a StellaObjectPtr field
-        var next_node = self.node.next;
-        if (next_node == null) return null;
-        var next_obj: *GCObject = @fieldParentPtr("node", next_node.?);
+        // var next_node = self.node.next;
+        // if (next_node == null) return null;
+        // var next_obj: *GCObject = @fieldParentPtr("node", next_node.?);
         const field = util.field_at(self.data().?, index);
-        while (next_node != null) {
-            const next_data = next_obj.data();
-            if (next_data == null) continue;
-            if (field == null) continue;
-            if (@intFromPtr(next_data.?) == @intFromPtr(field.?)) {
-                return next_obj;
+        if (field == null) return null;
+        var it = map.iterator();
+
+        while (it.next()) |entry| {
+            // util.dbgs("\nFound object at address: {*} {*} | {*}\n", .{ entry.key_ptr.*.*, entry.key_ptr.*, field.? });
+            if (@intFromPtr(field.?) == @intFromPtr(entry.key_ptr.*.*)) {
+                return entry.value_ptr.*;
             }
-            next_node = next_node.?.next;
-            next_obj = @fieldParentPtr("node", next_node.?);
         }
+        // while (next_node != null) {
+        //     const next_data = next_obj.data();
+        //     if (next_data == null) continue;
+        //     if (field == null) continue;
+        //     if (@intFromPtr(next_data.?) == @intFromPtr(field.?)) {
+        //         return next_obj;
+        //     }
+        //     next_node = next_node.?.next;
+        //     next_obj = @fieldParentPtr("node", next_node.?);
+        // }
 
         return null;
     }
@@ -73,6 +83,8 @@ pub const Collector = struct {
     scan: *std.DoublyLinkedList.Node, // Scan advances at scan
     top: *std.DoublyLinkedList.Node, // Still non-scanned objects are between bottom and top
     bottom: *std.DoublyLinkedList.Node,
+    allocations: usize,
+    memory_size: usize,
 
     pub fn init() !*Collector {
         const allocator = std.heap.page_allocator;
@@ -80,10 +92,12 @@ pub const Collector = struct {
 
         var memory: std.DoublyLinkedList = .{};
         // Pre-init memory
-        for (0..1024) |_| {
+        for (0..4) |_| {
             var object = try GCObject.init_raw(allocator);
             memory.append(&object.node);
         }
+        memory.first.?.prev = memory.last.?;
+        memory.last.?.next = memory.first.?;
 
         obj.* = Collector{
             .memory = memory,
@@ -94,13 +108,21 @@ pub const Collector = struct {
             .scan = memory.first.?,
             .top = memory.first.?,
             .bottom = memory.first.?,
+            .allocations = 0,
+            .memory_size = 0,
         };
 
         return obj;
     }
 
     fn is_ecru(self: *Collector, object: *GCObject) bool {
-        if ((@intFromPtr(object) >= @intFromPtr(self.bottom)) and (@intFromPtr(object) < @intFromPtr(self.top))) {
+        util.dbgs("\n [is_ecru]", .{});
+        const top_ptr = @as(*GCObject, @fieldParentPtr("node", self.top));
+        const bottom_ptr = @as(*GCObject, @fieldParentPtr("node", self.bottom));
+        util.dbgs("\n - top_ptr: {*}, bottom_ptr: {*}", .{ top_ptr, bottom_ptr });
+        util.dbgs("\n - object: {*}", .{object});
+        if ((@intFromPtr(object) >= @intFromPtr(bottom_ptr)) and (@intFromPtr(object) < @intFromPtr(top_ptr))) {
+            std.process.exit(0);
             return true;
         }
         return false;
@@ -108,66 +130,43 @@ pub const Collector = struct {
 
     /// Remove the object from the treadmill list
     pub fn unlink(object: *GCObject) void {
-        if (object.node.prev != null) {
-            object.node.prev.?.next = object.node.next;
-        }
-        if (object.node.next != null) {
-            object.node.next.?.prev = object.node.prev;
-        }
+        util.dbgs("\n[unlink]\n", .{});
+        // In a cyclic list, prev and next are never null
+        const prev = object.node.prev.?;
+        const next = object.node.next.?;
+        prev.next = next;
+        next.prev = prev;
+
+        // Optional: clear the node's own links
+        object.node.prev = null;
+        object.node.next = null;
     }
 
     /// Add the object to the treadmill list, before the head
     /// TODO: maybe at the tail?
     pub fn link(head: *GCObject, object: *GCObject) void {
-        // object.node.prev = head.node.prev;
-        // object.node.next = &head.node;
-        // const prev: *GCObject = @fieldParentPtr("node", head.node.prev.?);
-        // prev.* = object.*;
-        // if (object.node.prev != null) {
-        //     object.node.prev.?.next = &object.node;
-        // }
-        // Step 1: object points to the new tail
-        object.node.prev = head.node.prev;
-        object.node.next = &head.node;
+        util.dbgs("\n[link]\n", .{});
+        const next = head.node.next.?; // Node currently after `after`
 
-        // Step 2: If there was a previous node, update its next pointer
-        if (head.node.prev) |prev| {
-            prev.next = &object.node;
-        } else {
-            // If head is the only node, then object becomes the new head
-            // But we don’t need to update head — it’s a sentinel
-        }
+        object.node.prev = &head.node; // New node points back to `after`
+        object.node.next = next; // New node points forward to `next`
 
-        // Step 3: Update head's prev to point to object
-        head.node.prev = &object.node;
+        head.node.next = &object.node; // `after` now points to new node
+        next.prev = &object.node; // `next` now points back to new node
     }
 
     pub fn check_roots(self: *Collector) void {
+        // util.dbgs("\n[check_roots]\n", .{});
         for (self.root_queue.items) |root| {
-            // Check if it has been allocated at this point
-            // const current = self.bottom;
-            // while (@intFromPtr(current) != @intFromPtr(self.free)) {
-            //     const obj: *GCObject = @fieldParentPtr("node", current);
-            //     if (obj.data() == null) continue;
-            //     if (@intFromPtr(obj.data().?) == @intFromPtr(root.*)) {
-            //         // Yes, make it gray
-            //         util.dbgs("Root found at address: {*}\n", .{root});
-            //         self.darken(obj);
-            //     }
-            //     current = current.next;
-            // }
-
+            // util.dbgs("\n [check_roots] size: {d}\n", .{self.root_queue.items.len});
             var it = self.obj_to_void.iterator();
             while (it.next()) |entry| {
-                // util.dbgs("\nFound object at address: {*} {*}\n", .{ entry.key_ptr.*.*, entry.key_ptr.* });
+                // util.dbgs("\nFound object at address: {*} {*} | {*}\n", .{ entry.key_ptr.*.*, entry.key_ptr.*, root.* });
                 if (@intFromPtr(root.*) == @intFromPtr(entry.key_ptr.*.*)) {
-                    // util.dbgs("Found ecru object at address", .{});
-                    const obj = entry.value_ptr.*;
-                    if (self.is_ecru(obj)) {
-                        self.darken(obj);
-                    } else {
-                        break;
-                    }
+                    // const obj = entry.value_ptr.*;
+                    // self.darken(obj);
+                    self.scan = self.free;
+                    self.print();
                 }
             }
         }
@@ -175,8 +174,11 @@ pub const Collector = struct {
 
     /// Make an ecru object gray
     pub fn darken(self: *Collector, object: *GCObject) void {
+        const before_top: *GCObject = @fieldParentPtr("node", self.top);
+        util.dbgs("\n[darken] | {*} {*}\n", .{ object, before_top });
         unlink(object);
         const top: *GCObject = @fieldParentPtr("node", self.top);
+        util.dbgs("\n[darken] top: {} | object: {}\n", .{ top, object });
         link(top, object); // Put it back at the tail of the gray list
     }
 
@@ -197,90 +199,99 @@ pub const Collector = struct {
                 }
             }
         }
-
-        // const obj = self.obj_to_void.get(object) orelse {
-        //     @panic("Object not found");
-        // };
-        // if (self.is_ecru(obj)) {
-        //     self.darken(obj);
-        // }
-        // var next = self.memory.first;
-        // while (next != self.memory.last) {
-        //     util.dbgs("Checking object at address: {x}\n", .{@intFromPtr(next)});
-        //     const obj: *GCObject = @fieldParentPtr("node", next.?);
-        //     if (@intFromPtr(object) == @intFromPtr(obj)) {
-        //         if (self.is_ecru(obj)) {
-        //             self.darken(obj);
-        //         }
-        //     }
-        //     next = next.?.next;
-        //     if (next == next.?.next) {
-        //         @panic("Circular reference detected");
-        //     }
-        // }
     }
 
     pub fn alloca(self: *Collector, size: usize) ![]u8 {
-        const next_free = self.free.next;
-        if (next_free == null) {
-            return error.OutOfMemory;
+        if ((@intFromPtr(self.free) == @intFromPtr(self.bottom)) and self.allocations > 0) {
+            self.flip();
+            // std.process.exit(1);
         }
 
-        const obj: *GCObject = @fieldParentPtr("node", next_free.?);
-        obj.raw = self.allocator.alloc(u8, size) catch |err| {
-            self.free = self.free.next.?;
-            return err;
-        };
+        util.dbgs("\n[alloca]\n", .{});
+        const obj: *GCObject = @fieldParentPtr("node", self.free);
+        if (obj.raw == null) {
+            obj.raw = self.allocator.alloc(u8, size) catch |err| {
+                // self.free = self.free.next.?;
+                return err;
+            };
+        } else {
+            util.dbgs("\n[realloc]\n", .{});
+            obj.raw = self.allocator.realloc(obj.raw.?, size) catch |err| {
+                // self.free = self.free.next.?;
+                return err;
+            };
+        }
 
+        self.allocations += 1;
         self.free = self.free.next.?;
 
         self.advance();
 
         try self.obj_to_void.put(@ptrCast(&obj.raw.?), obj);
 
+        self.print();
+
         return obj.raw.?;
     }
 
     pub fn queue_roots(self: *Collector, object: **void) void {
+        util.dbgs("\n[queue_roots]\n", .{});
         self.root_queue.append(self.allocator, object) catch unreachable;
-        // util.dbgs("New entry: {} <-> {} | {}\n", .{ object.*, obj, object });
-        // self.obj_to_void.put(object, obj) catch unreachable;
     }
 
-    // pub fn mark_root(self: *Collector, object: **void) void {
-
-    // const obj: *GCObject = @fieldParentPtr("node", self.scan);
-    // obj.hint = object;
-    // self.scan = self.scan.next orelse self.scan; // Make it gray
-    // util.dbgs("New entry: {} <-> {} | {}\n", .{ object.*, obj, object });
-    // self.obj_to_void.put(object, obj) catch unreachable;
-    // const new_scan: *GCObject = @fieldParentPtr("node", self.scan);
-    // link(new_scan, obj);
-    // self.free = self.scan;
-    // // self.darken(obj);
-    // self.print();
-    // self.scan = &obj.node;
-    // self.free = &obj.node;
-    // link(scan, obj);
-    // }
-
     pub fn advance(self: *Collector) void {
+        util.dbgs("\n[advance]\n", .{});
         const scan: *GCObject = @fieldParentPtr("node", self.scan);
         const count = scan.field_count() orelse return;
+        util.dbgs("\n[advance] count: {}\n", .{count});
         for (0..count) |i| {
-            const field = scan.field_at(i);
+            const field = scan.field_at(i, &self.obj_to_void);
             if (field != null) {
                 if (self.is_ecru(field.?)) {
                     self.darken(field.?);
                 }
             }
         }
-        self.scan = self.scan.prev orelse self.scan; // Make it black
+        util.dbgs("advance: scan = {} | {*}\n", .{ self.scan, self.scan });
+        self.scan = self.scan.prev orelse @panic("No previous object");
+        util.dbgs("advance: scan = {} | {*}\n", .{ self.scan, self.scan });
+    }
+
+    pub fn flip(self: *Collector) void {
+        const temp = self.top;
+        self.top = self.bottom;
+        self.scan = self.top;
+        self.bottom = temp;
+    }
+
+    pub fn pop_root(self: *Collector, object: **void) !void {
+        for (self.root_queue.items, 0..self.root_queue.items.len) |root, i| {
+            if (root == object) {
+                _ = self.root_queue.orderedRemove(i);
+                return;
+            }
+        }
+        return error.ObjectNotFound;
     }
 
     pub fn print(self: *Collector) void {
+        util.dbgs("\n--------- Current state -------\n", .{});
+        util.dbgs("- top: {} \n", .{@as(*GCObject, @fieldParentPtr("node", self.top))});
+        util.dbgs("  - ptr: {*} \n", .{self.top});
+        util.dbgs("  - distance to bottom: {d} \n", .{util.node_distance(self.top, self.bottom)});
+        util.dbgs("- bottom: {}\n", .{@as(*GCObject, @fieldParentPtr("node", self.bottom))});
+        util.dbgs("  - ptr: {*} \n", .{self.bottom});
+        util.dbgs("  - distance to scan: {d} \n", .{util.node_distance(self.bottom, self.scan)});
+        util.dbgs("- scan: {}\n", .{@as(*GCObject, @fieldParentPtr("node", self.scan))});
+        util.dbgs("  - ptr: {*} \n", .{self.scan});
+        util.dbgs("  - distance to free: {d} \n", .{util.node_distance(self.scan, self.free)});
+        util.dbgs("- free: {}\n", .{@as(*GCObject, @fieldParentPtr("node", self.free))});
+        util.dbgs("  - ptr: {*} \n", .{self.free});
+        util.dbgs("  - distance to top: {d} \n", .{util.node_distance(self.free, self.top)});
+        util.dbgs("\n-------------------------------\n", .{});
+        util.dbgs("\n--------- Start of list -------\n", .{});
         var current = self.bottom;
-        while (@intFromPtr(current) != @intFromPtr(self.free)) {
+        for (0..1024) |_| {
             if (@intFromPtr(current) == @intFromPtr(self.bottom)) {
                 util.dbgs("--------- Bottom of list -------\n", .{});
             }
@@ -294,12 +305,21 @@ pub const Collector = struct {
             if (obj.data() != null) {
                 util.dbgs(" * Object at {x}\n", .{@intFromPtr(obj.data().?)});
             } else {
-                util.dbgs(" * Empty object\n", .{});
+                // util.dbgs(" * Empty object\n", .{});
             }
             if (current.next == null) {
                 util.dbgs("End of list\n", .{});
             }
             current = current.next.?;
+        }
+        // Print last object
+        const obj: *GCObject = @fieldParentPtr("node", current);
+        if (@intFromPtr(current) == @intFromPtr(self.free)) {
+            if (obj.data() != null) {
+                util.dbgs(" * Free object {x}\n", .{@intFromPtr(obj.data().?)});
+            } else {
+                util.dbgs(" * Empty free object\n", .{});
+            }
         }
         util.dbgs("--------- End of list -------\n", .{});
     }

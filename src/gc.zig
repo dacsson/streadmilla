@@ -59,6 +59,7 @@ pub const GCEnv = struct {
     }
 
     pub fn pop_root(self: *GCEnv, object: **void) !**void {
+        try self.collector.pop_root(object);
         for (self.roots.items, 0..) |root, i| {
             if (root == object) {
                 return self.roots.orderedRemove(i);
