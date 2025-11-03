@@ -40,7 +40,7 @@ pub const GCObject = struct {
         return util.field_count(self.data().?);
     }
 
-    pub fn field_at(self: *GCObject, index: usize, map: *std.AutoHashMap(**void, *GCObject)) ?*GCObject {
+    pub fn field_at(self: *GCObject, index: usize, map: *std.AutoHashMap(*void, *GCObject)) ?*GCObject {
         // util.dbgs("\n [field_at] \n", .{});
         if (self.data() == null) return null;
 
@@ -54,8 +54,7 @@ pub const GCObject = struct {
         var it = map.iterator();
 
         while (it.next()) |entry| {
-            // util.dbgs("\nFound object at address: {*} {*} | {*}\n", .{ entry.key_ptr.*.*, entry.key_ptr.*, field.? });
-            if (@intFromPtr(field.?) == @intFromPtr(entry.key_ptr.*.*)) {
+            if (@intFromPtr(field.?) == @intFromPtr(entry.key_ptr.*)) {
                 return entry.value_ptr.*;
             }
         }
@@ -89,7 +88,7 @@ pub const Root = struct {
 
 pub const Collector = struct {
     memory: std.DoublyLinkedList,
-    obj_to_void: std.AutoHashMap(**void, *GCObject),
+    obj_to_void: std.AutoHashMap(*void, *GCObject),
     root_queue: std.ArrayList(Root),
     allocator: std.mem.Allocator,
     free: *std.DoublyLinkedList.Node, // Allocation of new objects happens at free
@@ -120,7 +119,7 @@ pub const Collector = struct {
 
         obj.* = Collector{
             .memory = memory,
-            .obj_to_void = std.AutoHashMap(**void, *GCObject).init(allocator),
+            .obj_to_void = std.AutoHashMap(*void, *GCObject).init(allocator),
             .root_queue = std.ArrayList(Root).empty,
             .allocator = allocator,
             .free = memory.first.?,
@@ -306,8 +305,7 @@ pub const Collector = struct {
         util.dbgs("Searching object at address: {*} | {d}\n", .{ object, self.obj_to_void.count() });
         var it = self.obj_to_void.iterator();
         while (it.next()) |entry| {
-            // util.dbgs("\nFound object at address: {*} {*}\n", .{ entry.key_ptr.*.*, entry.key_ptr.* });
-            if (@intFromPtr(object) == @intFromPtr(entry.key_ptr.*.*)) {
+            if (@intFromPtr(object) == @intFromPtr(entry.key_ptr.*)) {
                 util.dbgs("\n    [read_barrier] success\n", .{});
                 const obj = entry.value_ptr.*;
                 if (self.is_ecru(obj)) {
@@ -348,7 +346,7 @@ pub const Collector = struct {
             self.advance();
         }
 
-        try self.obj_to_void.put(@ptrCast(&obj.raw.?), obj);
+        try self.obj_to_void.put(@ptrCast(obj.raw.?.ptr), obj);
 
         util.dbgs("\n  [allocated object] {*}\n", .{obj});
 
@@ -430,10 +428,30 @@ pub const Collector = struct {
 
         // self.check_roots();
         // ----
+        // 1) Finish scanning current grey region
         while (self.scan != self.top) {
             self.advance();
         }
 
+        // 2) Grey all roots BEFORE zeroing, to protect reachable data
+        for (self.root_queue.items, 0..self.root_queue.items.len) |root, _| {
+            const ptr = root.ptr;
+            var it = self.obj_to_void.iterator();
+            while (it.next()) |entry| {
+                if (@intFromPtr(ptr.*) == @intFromPtr(entry.key_ptr.*)) {
+                    util.dbgs("\n    [flip] greying root\n", .{});
+                    const obj = entry.value_ptr.*;
+                    self.make_gray(obj);
+                }
+            }
+        }
+
+        // 3) Scan any newly grey objects introduced by roots
+        while (self.scan != self.top) {
+            self.advance();
+        }
+
+        // 4) Zero the ecru region safely now that live objs are grey/black
         var curr = self.bottom;
         while (curr != self.top) {
             const obj: *GCObject = @fieldParentPtr("node", curr);
@@ -441,6 +459,7 @@ pub const Collector = struct {
             curr = curr.next.?;
         }
 
+        // 5) Slide bottom and reclassify remaining region to ecru
         self.bottom = self.top;
 
         curr = self.scan;
@@ -449,19 +468,6 @@ pub const Collector = struct {
             const obj: *GCObject = @fieldParentPtr("node", curr);
             self.make_ecru(obj);
             curr = next;
-        }
-
-        for (self.root_queue.items, 0..self.root_queue.items.len) |root, _| {
-            const ptr = root.ptr;
-            var it = self.obj_to_void.iterator();
-            while (it.next()) |entry| {
-                // util.dbgs("\nFound object at address: {*} {*}\n", .{ entry.key_ptr.*.*, entry.key_ptr.* });
-                if (@intFromPtr(ptr.*) == @intFromPtr(entry.key_ptr.*.*)) {
-                    util.dbgs("\n    [read_barrier] success\n", .{});
-                    const obj = entry.value_ptr.*;
-                    self.make_gray(obj);
-                }
-            }
         }
     }
 

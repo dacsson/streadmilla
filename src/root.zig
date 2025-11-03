@@ -29,7 +29,6 @@ var env: ?*gc.GCEnv = null;
 /// or initializes it if it hasn't been (on heap)
 fn get_env() !*gc.GCEnv {
     if (env) |e| {
-        e.check_roots();
         return e;
     }
     const allocator = std.heap.page_allocator;
