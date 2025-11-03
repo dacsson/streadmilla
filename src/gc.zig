@@ -37,7 +37,7 @@ pub const GCEnv = struct {
     /// to memory of gc env) you should take a pointer to it.
     pub fn alloc(self: *GCEnv, size: usize) ![]u8 {
         const obj = try self.collector.alloca(size);
-        self.collector.print();
+        // self.collector.print();
         return obj;
         // // TODO: align
         // const start = std.mem.alignForward(usize, self.next_free, 8);

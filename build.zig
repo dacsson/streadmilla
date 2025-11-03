@@ -4,9 +4,9 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const is_debug = b.option(bool, "debug", "Enable debug mode") orelse false;
     const with_gc_stats = b.option(bool, "gc-stats", "Enable garbage collector statistics") orelse false;
     const with_rt_stats = b.option(bool, "rt-stats", "Enable runtime statistics") orelse false;
+    const is_stella_debug = b.option(bool, "stella-debug", "Enable Stella debug mode") orelse false;
 
     const library = b.addLibrary(.{
         .name = "streadmilla",
@@ -23,10 +23,11 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(library);
 
-    library.root_module.addIncludePath(b.path("stella/"));
-    library.root_module.addCSourceFile(.{ .file = b.path("stella/runtime.c") });
+    library.linkLibC();
 
-    if (is_debug) {
+    library.root_module.addIncludePath(b.path("stella/"));
+
+    if (is_stella_debug) {
         library.root_module.addCMacro("STELLA_DEBUG", "1");
     }
     if (with_gc_stats) {
@@ -35,6 +36,8 @@ pub fn build(b: *std.Build) void {
     if (with_rt_stats) {
         library.root_module.addCMacro("STELLA_RUNTIME_STATS", "1");
     }
+
+    library.root_module.addCSourceFile(.{ .file = b.path("stella/runtime.c") });
 
     // library.root_module.addCSourceFile(.{ .file = b.path("stella/gc.c") });
 }
