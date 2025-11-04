@@ -15,6 +15,17 @@ pub inline fn dbgs(fmt: []const u8, args: anytype) void {
     if (DEBUG) {
         std.debug.print(fmt, args);
     }
+
+    const allocator = std.heap.page_allocator;
+    var log = std.fs.cwd().openFile("log.txt", .{ .mode = .write_only }) catch @panic("Failed to open log.txt");
+    defer log.close();
+
+    log.seekFromEnd(0) catch @panic("Failed to seek in log.txt");
+
+    const line = std.fmt.allocPrint(allocator, fmt, args) catch @panic("Failed to allocate memory");
+    defer allocator.free(line);
+
+    log.writeAll(line) catch @panic("Failed to write to log");
 }
 
 /// Converts a void pointer to a StellaObjectPtr.

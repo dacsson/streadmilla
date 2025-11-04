@@ -48,6 +48,8 @@ zig-out/lib/libstreadmilla.a:
 
 # Build the Zig library first
 $(BIN_NAME): %.stella
+	> log.txt
+	> state_graph.dot
 	@echo "🛠  Building C executable: $(BUILD_DIR)/$@"
 	@mkdir -p $(BUILD_DIR)
 	gcc -std=c11 $(BUILD_DIR)/$(BIN_NAME).c $(C_FLAGS) -o $(BUILD_DIR)/$(BIN_NAME)
@@ -59,7 +61,7 @@ test:
 	@echo "🧪 Running tests..."
 	@for file in $(wildcard test-stella/*.stella); do \
 		echo "🧪 Running test: $$file"; \
-		make FILE=$$file GC_STATS=1 RT_STATS=1; \
+		make FILE=$$file; \
 		echo 2 | ./build/$$(basename $$file .stella); \
 		echo 5 | ./build/$$(basename $$file .stella); \
 		echo 10 | ./build/$$(basename $$file .stella); \

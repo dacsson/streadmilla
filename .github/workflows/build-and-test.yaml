@@ -1,0 +1,27 @@
+name: Makefile CI
+
+on:
+  push:
+    branches: [ "master", "dev", "treadmill" ]
+  pull_request:
+    branches: [ "master", "dev", "treadmill" ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: mlugg/setup-zig@v2
+      with:
+        version: 0.16.0-dev.747+493ad58ff
+
+    - name: Install dependencies
+      run: make
+
+    - name: Run vanilla tests
+      run: make test
+
+    - name: Run valgrind tests
+      run: make test-valgrind
