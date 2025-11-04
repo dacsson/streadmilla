@@ -323,16 +323,22 @@ pub const Collector = struct {
     pub fn read_barrier(self: *Collector, object: *void) void {
         // Find corresponding GCObject
         util.dbgs("Searching object at address: {*} | {d}\n", .{ object, self.obj_to_void.count() });
-        var it = self.obj_to_void.iterator();
-        while (it.next()) |entry| {
-            if (@intFromPtr(object) == @intFromPtr(entry.key_ptr.*)) {
-                util.dbgs("\n    [read_barrier] success\n", .{});
-                const obj = entry.value_ptr.*;
-                if (self.is_ecru(obj)) {
-                    self.darken(obj);
-                } else {
-                    break;
-                }
+        // var it = self.obj_to_void.iterator();
+        // while (it.next()) |entry| {
+        //     if (@intFromPtr(object) == @intFromPtr(entry.key_ptr.*)) {
+        //         util.dbgs("\n    [read_barrier] success\n", .{});
+        //         const obj = entry.value_ptr.*;
+        //         if (self.is_ecru(obj)) {
+        //             self.darken(obj);
+        //         } else {
+        //             break;
+        //         }
+        //     }
+        // }
+        const obj = self.obj_to_void.get(object);
+        if (obj == null) {
+            if (self.is_ecru(obj)) {
+                self.darken(obj);
             }
         }
     }
@@ -488,14 +494,14 @@ pub const Collector = struct {
         var curr = self.bottom;
         while (curr != self.top) {
             const obj: *GCObject = @fieldParentPtr("node", curr);
-            var it = self.obj_to_void.iterator();
-            while (it.next()) |entry| {
-                if (@intFromPtr(obj.raw.?.ptr) == @intFromPtr(entry.key_ptr.*)) {
-                    if (!self.obj_to_void.remove(entry.key_ptr.*)) {
-                        @panic("self.obj_to_void.remove");
-                    }
-                }
-            }
+            // var it = self.obj_to_void.iterator();
+            // while (it.next()) |entry| {
+            //     if (@intFromPtr(obj.raw.?.ptr) == @intFromPtr(entry.key_ptr.*)) {
+            //         if (!self.obj_to_void.remove(entry.key_ptr.*)) {
+            //             @panic("self.obj_to_void.remove");
+            //         }
+            //     }
+            // }
             @memset(obj.raw.?, 0);
             curr = curr.next.?;
         }
@@ -519,13 +525,17 @@ pub const Collector = struct {
 
         for (self.root_queue.items, 0..self.root_queue.items.len) |root, _| {
             const ptr = root.ptr;
-            var it = self.obj_to_void.iterator();
-            while (it.next()) |entry| {
-                if (@intFromPtr(ptr.*) == @intFromPtr(entry.key_ptr.*)) {
-                    util.dbgs("\n    [flip] greying root\n", .{});
-                    const obj = entry.value_ptr.*;
-                    self.make_gray(obj);
-                }
+            // var it = self.obj_to_void.iterator();
+            // while (it.next()) |entry| {
+            //     if (@intFromPtr(ptr.*) == @intFromPtr(entry.key_ptr.*)) {
+            //         util.dbgs("\n    [flip] greying root\n", .{});
+            //         const obj = entry.value_ptr.*;
+            //         self.make_gray(obj);
+            //     }
+            // }
+            const obj = self.obj_to_void.get(ptr.*);
+            if (obj == null) {
+                self.make_gray(obj);
             }
         }
 
@@ -537,7 +547,7 @@ pub const Collector = struct {
     pub fn pop_root(self: *Collector, object: **void) !void {
         for (self.root_queue.items, 0..self.root_queue.items.len) |root, i| {
             if (root.ptr == object) {
-                _ = self.root_queue.orderedRemove(i);
+                _ = self.root_queue.swapRemove(i);
                 return;
             }
         }
