@@ -337,8 +337,8 @@ pub const Collector = struct {
         // }
         const obj = self.obj_to_void.get(object);
         if (obj == null) {
-            if (self.is_ecru(obj)) {
-                self.darken(obj);
+            if (self.is_ecru(obj.?)) {
+                self.darken(obj.?);
             }
         }
     }
@@ -535,7 +535,7 @@ pub const Collector = struct {
             // }
             const obj = self.obj_to_void.get(ptr.*);
             if (obj == null) {
-                self.make_gray(obj);
+                self.make_gray(obj.?);
             }
         }
 
