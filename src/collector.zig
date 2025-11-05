@@ -87,7 +87,7 @@ pub const GCObject = struct {
     }
 };
 
-pub const MAX_OBJECTS = 1024;
+pub const MAX_OBJECTS = 4096;
 
 pub const Root = struct {
     ptr: **void,
@@ -106,6 +106,7 @@ pub const Collector = struct {
     allocations: usize,
     memory_size: usize,
     event_queue: std.ArrayList(Event),
+    flips: usize,
 
     pub fn init() !*Collector {
         const allocator = std.heap.page_allocator;
@@ -137,6 +138,7 @@ pub const Collector = struct {
             .allocations = 0,
             .memory_size = 0,
             .event_queue = std.ArrayList(Event).empty,
+            .flips = 0,
         };
 
         obj.event_queue.append(allocator, Event.NONE) catch {
@@ -179,34 +181,36 @@ pub const Collector = struct {
     /// Remove the object from the treadmill list
     pub fn unlink(self: *Collector, object: *GCObject) void {
         util.dbgs("\n[unlink]\n", .{});
+
         const before_top: *GCObject = @fieldParentPtr("node", self.top);
         const before_scan: *GCObject = @fieldParentPtr("node", self.scan);
         const before_bottom: *GCObject = @fieldParentPtr("node", self.bottom);
         const before_free: *GCObject = @fieldParentPtr("node", self.free);
 
-        // In a cyclic list, prev and next are never null
-        const prev = object.node.prev.?;
-        const next = object.node.next.?;
+        // // In a cyclic list, prev and next are never null
+        // const prev = object.node.prev.?;
+        // const next = object.node.next.?;
 
         if (object == before_free) {
-            self.free = next;
+            self.free = object.node.next.?;
         }
         if (object == before_top) {
-            self.top = next;
+            self.top = object.node.next.?;
         }
         if (object == before_bottom) {
-            self.bottom = next;
+            self.bottom = object.node.next.?;
         }
         if (object == before_scan) {
-            self.scan = next;
+            self.scan = object.node.next.?;
         }
 
-        // Optional: clear the node's own links
-        object.node.prev = null;
-        object.node.next = null;
+        // // Optional: clear the node's own links
+        // object.node.prev = null;
+        // object.node.next = null;
 
-        prev.next = next;
-        next.prev = prev;
+        // prev.next = next;
+        // next.prev = prev;
+        self.memory.remove(&object.node);
     }
 
     /// Add the object to the treadmill list, before the head
@@ -218,13 +222,15 @@ pub const Collector = struct {
         const before_bottom: *GCObject = @fieldParentPtr("node", self.bottom);
         const before_free: *GCObject = @fieldParentPtr("node", self.free);
 
-        const next = head.node.next.?; // Node currently after `after`
+        self.memory.insertBefore(head.node.next.?, &object.node);
 
-        object.node.prev = &head.node; // New node points back to `after`
-        object.node.next = next; // New node points forward to `next`
+        // const next = head.node.next.?; // Node currently after `after`
 
-        head.node.next = &object.node; // `after` now points to new node
-        next.prev = &object.node; // `next` now points back to new node
+        // object.node.prev = &head.node; // New node points back to `after`
+        // object.node.next = next; // New node points forward to `next`
+
+        // head.node.next = &object.node; // `after` now points to new node
+        // next.prev = &object.node; // `next` now points back to new node
 
         if (object == before_free) {
             self.free = &object.node;
@@ -347,7 +353,7 @@ pub const Collector = struct {
         //     }
         // }
         const obj = self.obj_to_void.get(object);
-        if (obj == null) {
+        if (obj != null) {
             if (self.is_ecru(obj.?)) {
                 self.darken(obj.?);
             }
@@ -387,7 +393,7 @@ pub const Collector = struct {
 
         // try self.obj_to_void.put(@ptrCast(obj.raw.?.ptr), obj);
 
-        var entry = try self.obj_to_void.getOrPut(@ptrCast(obj.raw.?.ptr));
+        var entry = try self.obj_to_void.getOrPut(@ptrCast(obj.raw.?[0..size]));
         if (!entry.found_existing) {
             entry.value_ptr.* = obj;
         }
@@ -397,6 +403,7 @@ pub const Collector = struct {
         self.print();
 
         const msg = std.fmt.allocPrint(self.allocator, "// From [alloca] with last event {} \n", .{last_event}) catch unreachable;
+        defer self.allocator.free(msg);
         self.state_graph(msg);
         self.event_queue.append(self.allocator, Event.ALLOC) catch unreachable;
         return obj.raw.?[0..size];
@@ -440,6 +447,7 @@ pub const Collector = struct {
     }
 
     pub fn flip(self: *Collector) void {
+        self.flips += 1;
         self.state_graph("// From before [flip] \n");
         self.event_queue.append(self.allocator, Event.FLIP) catch unreachable;
         // const curr = self.scan;
@@ -545,7 +553,7 @@ pub const Collector = struct {
             //     }
             // }
             const obj = self.obj_to_void.get(ptr.*);
-            if (obj == null) {
+            if (obj != null) {
                 self.make_gray(obj.?);
             }
         }

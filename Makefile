@@ -61,7 +61,7 @@ test:
 	@echo "🧪 Running tests..."
 	@for file in $(wildcard test-stella/*.stella); do \
 		echo "🧪 Running test: $$file"; \
-		make FILE=$$file; \
+		make FILE=$$file GC_STATS=1; \
 		echo 2 | ./build/$$(basename $$file .stella); \
 		echo 5 | ./build/$$(basename $$file .stella); \
 		echo 10 | ./build/$$(basename $$file .stella); \
