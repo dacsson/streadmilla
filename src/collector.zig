@@ -87,7 +87,7 @@ pub const GCObject = struct {
     }
 };
 
-pub var MAX_OBJECTS: usize = 1024;
+pub var MAX_OBJECTS: usize = 8192;
 
 pub const Root = struct {
     ptr: **void,
@@ -370,9 +370,9 @@ pub const Collector = struct {
             std.process.exit(1);
         }
 
-        if (self.scan == self.top) {
-            MAX_OBJECTS += 128;
-        }
+        // if (self.scan == self.top) {
+        //     MAX_OBJECTS += 128;
+        // }
 
         util.dbgs("\n[alloca] {}\n", .{self.event_queue.getLast()});
         const obj: *GCObject = @fieldParentPtr("node", self.free);
