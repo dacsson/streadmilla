@@ -56,11 +56,14 @@ pub const GCObject = struct {
 
         // if (field.? == self.data().?) @panic("field is self");
 
-        while (it.next()) |entry| {
-            if (@intFromPtr(field.?) == @intFromPtr(entry.key_ptr.*)) {
-                return entry.value_ptr.*;
-            }
-        }
+        // while (it.next()) |entry| {
+        //     if (@intFromPtr(field.?) == @intFromPtr(entry.key_ptr.*)) {
+        //         return entry.value_ptr.*;
+        //     }
+        // }
+        const entry = map.get(field.?);
+        if (entry != null) return entry.?;
+
         // while (next_node != null) {
         //     const next_data = next_obj.data();
         //     if (next_data == null) continue;
@@ -157,10 +160,18 @@ pub const Collector = struct {
         // empty ecru region if top == bottom
         if (@intFromPtr(self.bottom) == @intFromPtr(self.top)) return false;
 
-        var cur = self.bottom;
-        while (@intFromPtr(cur) != @intFromPtr(self.top)) {
-            if (@as(*GCObject, @fieldParentPtr("node", cur)) == object) return true;
-            cur = cur.next.?; // safe in cyclic list
+        // var cur = self.bottom;
+        // while (@intFromPtr(cur) != @intFromPtr(self.top)) {
+        //     if (@as(*GCObject, @fieldParentPtr("node", cur)) == object) return true;
+        //     cur = cur.next.?; // safe in cyclic list
+        // }
+        const top_ptr = @as(*GCObject, @fieldParentPtr("node", self.top));
+        const bottom_ptr = @as(*GCObject, @fieldParentPtr("node", self.bottom));
+        // util.dbgs("\n - top_ptr: {*}, bottom_ptr: {*}", .{ top_ptr, bottom_ptr });
+        // util.dbgs("\n - object: {*}", .{object});
+        if ((@intFromPtr(object) >= @intFromPtr(bottom_ptr)) and (@intFromPtr(object) < @intFromPtr(top_ptr))) {
+            std.process.exit(0);
+            return true;
         }
         return false;
     }

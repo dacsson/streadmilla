@@ -51,21 +51,21 @@ pub const GCEnv = struct {
 
     pub fn push_root(self: *GCEnv, object: **void) !void {
         self.collector.queue_roots(object);
-        try self.roots.append(self.allocator, object);
+        // try self.roots.append(self.allocator, object);
     }
 
     pub fn read_barrier(self: *GCEnv, object: *void) void {
         self.collector.read_barrier(object);
     }
 
-    pub fn pop_root(self: *GCEnv, object: **void) !**void {
+    pub fn pop_root(self: *GCEnv, object: **void) !void {
         try self.collector.pop_root(object);
-        for (self.roots.items, 0..) |root, i| {
-            if (root == object) {
-                return self.roots.orderedRemove(i);
-            }
-        }
-        return error.NotFound;
+        // for (self.roots.items, 0..) |root, i| {
+        //     if (root == object) {
+        //         return self.roots.orderedRemove(i);
+        //     }
+        // }
+        // return error.NotFound;
     }
 
     pub fn check_roots(self: *GCEnv) void {
