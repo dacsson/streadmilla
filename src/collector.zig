@@ -52,7 +52,7 @@ pub const GCObject = struct {
         // var next_obj: *GCObject = @fieldParentPtr("node", next_node.?);
         const field = util.field_at(self.data().?, index);
         if (field == null) return null;
-        var it = map.iterator();
+        // var it = map.iterator();
 
         // if (field.? == self.data().?) @panic("field is self");
 
@@ -61,7 +61,7 @@ pub const GCObject = struct {
         //         return entry.value_ptr.*;
         //     }
         // }
-        const entry = map.get(field.?);
+        const entry = map.get(@ptrCast(field.?));
         if (entry != null) return entry.?;
 
         // while (next_node != null) {
