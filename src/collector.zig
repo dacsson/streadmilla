@@ -70,7 +70,7 @@ pub const GCObject = struct {
     }
 };
 
-pub var MAX_OBJECTS: usize = 4096;
+pub var MAX_OBJECTS: usize = 8192;
 
 pub const Root = struct {
     ptr: **void,
@@ -294,7 +294,7 @@ pub const Collector = struct {
             self.advance();
         }
 
-        var entry = try self.obj_to_void.getOrPut(@ptrCast(obj.raw.?[0..size]));
+        var entry = try self.obj_to_void.getOrPut(@ptrCast(obj.raw.?));
         if (!entry.found_existing) {
             entry.value_ptr.* = obj;
         }
@@ -354,26 +354,45 @@ pub const Collector = struct {
         self.state_graph("// In [flip] after advance \n");
 
         // 4) Zero the ecru region safely now that live objs are grey/black
+        var ecru = std.ArrayList(*GCObject).empty;
         var curr = self.bottom;
-        while (curr != self.top) {
-            const obj: *GCObject = @fieldParentPtr("node", curr);
-            @memset(obj.raw.?, 0);
-            obj.color = .WHITE;
+        while (@intFromPtr(curr) != @intFromPtr(self.top)) {
+            ecru.append(self.allocator, @fieldParentPtr("node", curr)) catch unreachable;
             curr = curr.next.?;
         }
+        for (ecru.items) |obj| {
+            @memset(obj.raw.?, 0);
+            _ = self.obj_to_void.remove(@ptrCast(obj.raw.?));
+            obj.color = .WHITE;
+        }
+        // var curr = self.bottom;
+        // while (curr != self.top) {
+        //     const obj: *GCObject = @fieldParentPtr("node", curr);
+        //     @memset(obj.raw.?, 0);
+        //     _ = self.obj_to_void.remove(@ptrCast(obj.raw.?));
+        //     obj.color = .WHITE;
+        //     curr = curr.next.?;
+        // }
 
         self.state_graph("// In [flip] after ecru zeroing \n");
 
         // 5) Slide bottom and reclassify remaining region to ecru
         self.bottom = self.top;
 
+        // curr = self.scan;
+        // while (curr != self.free) {
+        //     const next = curr.next.?;
+        //     const obj: *GCObject = @fieldParentPtr("node", curr);
+        //     self.make_ecru(obj);
+        //     curr = next;
+        // }
+        var black_objs = std.ArrayList(*GCObject).empty;
         curr = self.scan;
         while (curr != self.free) {
-            const next = curr.next.?;
-            const obj: *GCObject = @fieldParentPtr("node", curr);
-            self.make_ecru(obj);
-            curr = next;
+            black_objs.append(self.allocator, @fieldParentPtr("node", curr)) catch unreachable;
+            curr = curr.next.?;
         }
+        for (black_objs.items) |obj| self.make_ecru(obj);
 
         self.state_graph("// In [flip] after changing black to ecru \n");
 

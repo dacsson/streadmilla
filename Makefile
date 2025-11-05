@@ -68,7 +68,7 @@ test:
 		make clean; \
 	done
 
-test-valgrid:
+test-valgrind:
 	@echo "🛠  Fetching dependencies..."
 	zig fetch --save git+https://github.com/ziglang/translate-c
 	@echo "🧪 Running tests..."
@@ -77,6 +77,9 @@ test-valgrid:
 		make FILE=$$file; \
 		echo 2 | valgrind --leak-check=full --show-leak-kinds=all ./build/$$(basename $$file .stella); \
 		echo 5 | valgrind --leak-check=full --show-leak-kinds=all ./build/$$(basename $$file .stella); \
+		echo 6 | valgrind --leak-check=full --show-leak-kinds=all ./build/$$(basename $$file .stella); \
+		echo 7 | valgrind --leak-check=full --show-leak-kinds=all ./build/$$(basename $$file .stella); \
+		echo 8 | valgrind --leak-check=full --show-leak-kinds=all ./build/$$(basename $$file .stella); \
 		echo 10 | valgrind --leak-check=full --show-leak-kinds=all ./build/$$(basename $$file .stella); \
 		make clean; \
 	done

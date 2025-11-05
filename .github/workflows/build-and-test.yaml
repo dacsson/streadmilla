@@ -20,8 +20,8 @@ jobs:
     - name: Install dependencies
       run: make
 
-    - name: Run vanilla tests
-      run: make test
-
     - name: Run valgrind tests
       run: make test-valgrind
+
+    - name: Run vanilla tests
+      run: make test
