@@ -87,7 +87,7 @@ pub const GCObject = struct {
     }
 };
 
-pub const MAX_OBJECTS = 4096;
+pub var MAX_OBJECTS: usize = 1024;
 
 pub const Root = struct {
     ptr: **void,
@@ -367,7 +367,11 @@ pub const Collector = struct {
             self.flip();
             util.dbgs("\n\n ----------------- after flip \n\n", .{});
             self.print();
-            // std.process.exit(1);
+            std.process.exit(1);
+        }
+
+        if (self.scan == self.top) {
+            MAX_OBJECTS += 128;
         }
 
         util.dbgs("\n[alloca] {}\n", .{self.event_queue.getLast()});
@@ -450,51 +454,6 @@ pub const Collector = struct {
         self.flips += 1;
         self.state_graph("// From before [flip] \n");
         self.event_queue.append(self.allocator, Event.FLIP) catch unreachable;
-        // const curr = self.scan;
-        // while (curr != self.free) {
-        //     if (curr == self.bottom) {
-        //         if (curr == self.top) {
-        //             self.top = self.top.next.?;
-        //         } else if (curr == self.scan) {
-        //             self.scan = self.scan.next.?;
-        //         } else if (curr == self.free) {
-        //             self.free = self.free.next.?;
-        //         }
-        //     } else {
-        //         const bottom_obj = @as(*GCObject, @fieldParentPtr("node", self.bottom));
-        //         const curr_obj = @as(*GCObject, @fieldParentPtr("node", curr));
-        //         unlink(curr_obj);
-        //         link(bottom_obj, curr_obj);
-        //         self.top = self.top.next.?;
-        //     }
-        // }
-        // ----
-        // self.allocations = 0;
-        // const temp = self.top;
-        // self.top = self.bottom;
-        // // self.scan = self.top;
-        // self.bottom = temp;
-
-        // self.scan = self.top;
-        // self.free = self.top;
-
-        // for (self.root_queue.items, 0..self.root_queue.items.len) |root, _| {
-        //     const ptr = root.ptr;
-        //     var it = self.obj_to_void.iterator();
-        //     while (it.next()) |entry| {
-        //         // util.dbgs("\nFound object at address: {*} {*}\n", .{ entry.key_ptr.*.*, entry.key_ptr.* });
-        //         if (@intFromPtr(ptr.*) == @intFromPtr(entry.key_ptr.*.*)) {
-        //             util.dbgs("\n    [read_barrier] success\n", .{});
-        //             const obj = entry.value_ptr.*;
-        //             self.make_gray(obj);
-        //             self.free = self.free.next.?;
-        //             self.scan = self.scan.next.?;
-        //         }
-        //     }
-        // }
-
-        // self.check_roots();
-        // ----
         // 1) Finish scanning current grey region
         while (self.scan != self.top) {
             self.advance();
@@ -502,25 +461,10 @@ pub const Collector = struct {
 
         self.state_graph("// In [flip] after advance \n");
 
-        // 2) Grey all roots BEFORE zeroing, to protect reachable data
-
-        // 3) Scan any newly grey objects introduced by roots
-        // while (self.scan != self.top) {
-        //     self.advance();
-        // }
-
         // 4) Zero the ecru region safely now that live objs are grey/black
         var curr = self.bottom;
         while (curr != self.top) {
             const obj: *GCObject = @fieldParentPtr("node", curr);
-            // var it = self.obj_to_void.iterator();
-            // while (it.next()) |entry| {
-            //     if (@intFromPtr(obj.raw.?.ptr) == @intFromPtr(entry.key_ptr.*)) {
-            //         if (!self.obj_to_void.remove(entry.key_ptr.*)) {
-            //             @panic("self.obj_to_void.remove");
-            //         }
-            //     }
-            // }
             @memset(obj.raw.?, 0);
             curr = curr.next.?;
         }
@@ -544,14 +488,6 @@ pub const Collector = struct {
 
         for (self.root_queue.items, 0..self.root_queue.items.len) |root, _| {
             const ptr = root.ptr;
-            // var it = self.obj_to_void.iterator();
-            // while (it.next()) |entry| {
-            //     if (@intFromPtr(ptr.*) == @intFromPtr(entry.key_ptr.*)) {
-            //         util.dbgs("\n    [flip] greying root\n", .{});
-            //         const obj = entry.value_ptr.*;
-            //         self.make_gray(obj);
-            //     }
-            // }
             const obj = self.obj_to_void.get(ptr.*);
             if (obj != null) {
                 self.make_gray(obj.?);
