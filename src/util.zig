@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const gc = @import("gc.zig");
 const collector = @import("collector.zig");
 const helpers = @import("std").zig.c_translation.helpers;
 const runtime = @cImport({
@@ -36,17 +35,6 @@ pub inline fn void_to_stella_object(obj: *void) collector.StellaObjectPtr {
 /// Converts a memory slice to a StellaObjectPtr.
 pub inline fn memory_to_stella_object(mem: *[]u8) collector.StellaObjectPtr {
     return @as(collector.StellaObjectPtr, @ptrCast(@alignCast(mem.ptr)));
-}
-
-const COLOUR = enum(usize) {
-    BLACK, // have been completely scanned together with the objects they point to
-    GREY, // have been scanned, but the objects they point to are not guaranteed to be scanned
-    ECRU, // have not been scanned
-    WHITE,
-};
-
-pub fn get_colour(obj: collector.StellaObjectPtr) COLOUR {
-    return @enumFromInt(runtime.STELLA_OBJECT_GET_COLOUR(obj));
 }
 
 // Interesting fact: i found a real bug in zig translate-c

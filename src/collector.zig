@@ -1,17 +1,20 @@
+//! Implementation of the "Treadmill" garbage collector.
+
 const std = @import("std");
 const builtin = @import("builtin");
-const gc = std.gc;
+const util = @import("util.zig");
 const runtime = @cImport({
     @cInclude("runtime.h");
 });
-
-const util = @import("util.zig");
 
 const DEBUG = builtin.mode == .Debug;
 
 pub const StellaObject = runtime.stella_object;
 pub const StellaObjectPtr = *allowzero align(1) StellaObject;
 
+// For debugging purposes
+// and to detect root allocation
+// to make them gray instead of black
 pub const Event = enum {
     PUSH_ROOT,
     ALLOC_ROOT,
@@ -21,23 +24,30 @@ pub const Event = enum {
 };
 
 pub const Color = enum {
-    BLACK,
-    GRAY,
-    ECRU,
-    WHITE,
+    BLACK, // have been completely scanned together with the objects they point to
+    GRAY, // have been scanned, but the objects they point to are not guaranteed to be scanned
+    ECRU, // have not been scanned
+    WHITE, // free
 };
 
 pub const GCObject = struct {
+    /// Points to its position in memory
     node: std.DoublyLinkedList.Node,
+    /// Data that this object owns
     raw: ?[]u8,
+    /// Size of allocated data
     size: usize,
     color: Color,
 
+    /// Translate raw data that this object owns into StellaObjectPtr
     pub fn data(self: *GCObject) ?StellaObjectPtr {
         if (self.raw == null) return null;
+
         var slice = self.raw.?[0..self.size];
         const st = util.memory_to_stella_object(&slice);
+
         util.dbgs("  | GCObject header: {d} | Byte size: {d}\n", .{ runtime.STELLA_OBJECT_HEADER_TAG(st.object_header), self.raw.?.len });
+
         return util.memory_to_stella_object(&slice);
     }
 
@@ -60,6 +70,7 @@ pub const GCObject = struct {
         return null;
     }
 
+    /// Initialize zero-sized object
     pub fn init_raw(allocator: std.mem.Allocator) !*GCObject {
         const obj = try allocator.create(GCObject);
         obj.raw = null;
@@ -70,21 +81,35 @@ pub const GCObject = struct {
     }
 };
 
-pub var MAX_OBJECTS: usize = 8192;
+/// Maximum number of objects that can be allocated
+/// and put into a doubly linked list, which acts as a
+/// heap in this gc algorithm
+pub var MAX_OBJECTS: usize = 59;
 
 pub const Root = struct {
+    /// Raw pointer to some objects
     ptr: **void,
+    /// Whether we grayed out the object
     visited: bool,
 };
 
 pub const Collector = struct {
+    /// Memory is a doubly linked list of objects
+    /// where the state of the object is determined
+    /// by what pointers are above and below it
+    /// a.k.a it's color
     memory: std.DoublyLinkedList,
+    /// Map of objects to their pointers for fast lookup
     obj_to_void: std.AutoHashMap(*void, *GCObject),
+    /// For properly allocating root objects
     root_queue: std.ArrayList(Root),
     allocator: std.mem.Allocator,
-    free: *std.DoublyLinkedList.Node, // Allocation of new objects happens at free
-    scan: *std.DoublyLinkedList.Node, // Scan advances at scan
-    top: *std.DoublyLinkedList.Node, // Still non-scanned objects are between bottom and top
+    /// Allocation of new objects happens at free
+    free: *std.DoublyLinkedList.Node,
+    /// Moves counter clock-wise and darkens objects
+    scan: *std.DoublyLinkedList.Node,
+    /// Still non-scanned objects are between bottom and top
+    top: *std.DoublyLinkedList.Node,
     bottom: *std.DoublyLinkedList.Node,
     allocations: usize,
     memory_size: usize,
@@ -96,16 +121,20 @@ pub const Collector = struct {
         const obj = try allocator.create(Collector);
 
         var memory: std.DoublyLinkedList = .{};
+
         // Pre-init memory
         for (0..MAX_OBJECTS) |_| {
             var object = try GCObject.init_raw(allocator);
             object.raw = allocator.alloc(u8, 64) catch |err| {
                 return err;
             };
+            // Large enough to fit a stella object
             object.size = 64;
             @memset(object.raw.?, 0);
             memory.append(&object.node);
         }
+
+        // Link bottom and top
         memory.first.?.prev = memory.last.?;
         memory.last.?.next = memory.first.?;
 
@@ -136,17 +165,6 @@ pub const Collector = struct {
         if (@intFromPtr(self.bottom) == @intFromPtr(self.top)) return false;
 
         return object.color == Color.ECRU;
-
-        // // const top_ptr = @as(*GCObject, @fieldParentPtr("node", self.top));
-        // // const bottom_ptr = @as(*GCObject, @fieldParentPtr("node", self.bottom));
-
-        // var cur = self.bottom;
-        // while (cur != self.top) {
-        //     const node_obj: *GCObject = @fieldParentPtr("node", cur);
-        //     if (node_obj == object) return true;
-        //     cur = cur.next.?;
-        // }
-        // return false;
     }
 
     /// Remove the object from the treadmill list
@@ -175,7 +193,6 @@ pub const Collector = struct {
     }
 
     /// Add the object to the treadmill list, before the head
-    /// TODO: maybe at the tail?
     pub fn link(self: *Collector, head: *GCObject, object: *GCObject) void {
         util.dbgs("\n[link] {}\n", .{self.allocations});
         const before_top: *GCObject = @fieldParentPtr("node", self.top);
@@ -207,11 +224,7 @@ pub const Collector = struct {
         self.link(head, object);
     }
 
-    //================ COLORING ==============
-
     pub fn make_gray(self: *Collector, object: *GCObject) void {
-        // self.unlink(object);
-        // self.link(@fieldParentPtr("node", self.top), object);
         object.color = .GRAY;
         self.insert_in(@fieldParentPtr("node", self.top), object);
 
@@ -244,19 +257,13 @@ pub const Collector = struct {
         }
     }
 
-    /// Make an ecru object gray
-    pub fn darken(self: *Collector, object: *GCObject) void {
-        self.make_gray(object);
-    }
-
-    /// Read barrier for the object
     pub fn read_barrier(self: *Collector, object: *void) void {
-        // Find corresponding GCObject
         util.dbgs("Searching object at address: {*} | {d}\n", .{ object, self.obj_to_void.count() });
+        // Find corresponding GCObject
         const obj = self.obj_to_void.get(object);
         if (obj != null) {
             if (self.is_ecru(obj.?)) {
-                self.darken(obj.?);
+                self.make_gray(obj.?);
             }
         }
     }
@@ -268,12 +275,7 @@ pub const Collector = struct {
             self.flip();
             util.dbgs("\n\n ----------------- after flip \n\n", .{});
             self.print();
-            // std.process.exit(1);
         }
-
-        // if (self.scan == self.top) {
-        //     MAX_OBJECTS += 128;
-        // }
 
         util.dbgs("\n[alloca] {}\n", .{self.event_queue.getLast()});
         const obj: *GCObject = @fieldParentPtr("node", self.free);
@@ -282,18 +284,20 @@ pub const Collector = struct {
         self.allocations += 1;
         self.free = self.free.next.?;
 
-        // Allocating a root object
+        // Allocating a root object means putting it
+        // in the "gray" section to make it live and not
+        // turn it black immediatly
         const last_event = self.event_queue.getLast();
         if ((last_event == Event.PUSH_ROOT)) {
             // Make it gray
             util.dbgs("\n[allocating root]\n", .{});
-            // self.darken(obj);
             self.make_gray(obj);
             self.event_queue.append(self.allocator, Event.ALLOC_ROOT) catch unreachable;
         } else {
             self.advance();
         }
 
+        // Associate object with its raw pointer
         var entry = try self.obj_to_void.getOrPut(@ptrCast(obj.raw.?));
         if (!entry.found_existing) {
             entry.value_ptr.* = obj;
@@ -302,7 +306,6 @@ pub const Collector = struct {
         util.dbgs("\n  [allocated object] {*}\n", .{obj});
 
         self.print();
-
         const msg = std.fmt.allocPrint(self.allocator, "// From [alloca] with last event {} \n", .{last_event}) catch unreachable;
         defer self.allocator.free(msg);
         self.state_graph(msg);
@@ -310,6 +313,7 @@ pub const Collector = struct {
         return obj.raw.?[0..size];
     }
 
+    // a.k.a. push_root
     pub fn queue_roots(self: *Collector, object: **void) void {
         self.event_queue.append(self.allocator, Event.PUSH_ROOT) catch unreachable;
         util.dbgs("\n[queue_roots]\n", .{});
@@ -317,6 +321,11 @@ pub const Collector = struct {
         self.root_queue.append(self.allocator, root) catch unreachable;
     }
 
+    // `advance` takes the gray object pointed to by scan, which is
+    // the head of the FRONT list, and grays all ecru objects that
+    // this object points to. After that, scan is advanced (counterclockwise),
+    // effectively moving the scanned object into the SCANNED section
+    // and making it black.
     pub fn advance(self: *Collector) void {
         if (self.scan == self.top) return;
         util.dbgs("\n[advance]\n", .{});
@@ -327,7 +336,7 @@ pub const Collector = struct {
             const field = scan.field_at(i, &self.obj_to_void);
             if (field != null) {
                 if (self.is_ecru(field.?)) {
-                    self.darken(field.?);
+                    self.make_gray(field.?);
                 }
             }
         }
@@ -342,18 +351,21 @@ pub const Collector = struct {
         util.dbgs("advance: scan = {} | {*}\n", .{ self.scan, self.scan });
     }
 
+    // Swap top and bottom pointers and redefine colours: the old black objects
+    // are now ecru and the old ecru objects (they are garbage) are now white
     pub fn flip(self: *Collector) void {
         self.flips += 1;
         self.state_graph("// From before [flip] \n");
         self.event_queue.append(self.allocator, Event.FLIP) catch unreachable;
-        // 1) Finish scanning current grey region
+
+        // Finish scanning current grey region
         while (self.scan != self.top) {
             self.advance();
         }
 
         self.state_graph("// In [flip] after advance \n");
 
-        // 4) Zero the ecru region safely now that live objs are grey/black
+        // Zero the ecru region (garbage)
         var ecru = std.ArrayList(*GCObject).empty;
         var curr = self.bottom;
         while (@intFromPtr(curr) != @intFromPtr(self.top)) {
@@ -365,27 +377,12 @@ pub const Collector = struct {
             _ = self.obj_to_void.remove(@ptrCast(obj.raw.?));
             obj.color = .WHITE;
         }
-        // var curr = self.bottom;
-        // while (curr != self.top) {
-        //     const obj: *GCObject = @fieldParentPtr("node", curr);
-        //     @memset(obj.raw.?, 0);
-        //     _ = self.obj_to_void.remove(@ptrCast(obj.raw.?));
-        //     obj.color = .WHITE;
-        //     curr = curr.next.?;
-        // }
 
         self.state_graph("// In [flip] after ecru zeroing \n");
 
-        // 5) Slide bottom and reclassify remaining region to ecru
+        // Slide bottom and reclassify remaining region to ecru
         self.bottom = self.top;
 
-        // curr = self.scan;
-        // while (curr != self.free) {
-        //     const next = curr.next.?;
-        //     const obj: *GCObject = @fieldParentPtr("node", curr);
-        //     self.make_ecru(obj);
-        //     curr = next;
-        // }
         var black_objs = std.ArrayList(*GCObject).empty;
         curr = self.scan;
         while (curr != self.free) {
@@ -395,9 +392,9 @@ pub const Collector = struct {
         for (black_objs.items) |obj| self.make_ecru(obj);
 
         self.state_graph("// In [flip] after changing black to ecru \n");
-
         util.dbgs("\n    [flip] to be greayed {d} roots\n", .{self.root_queue.items.len});
 
+        // Gray out roots before new cycle
         for (self.root_queue.items, 0..self.root_queue.items.len) |root, _| {
             const ptr = root.ptr;
             const obj = self.obj_to_void.get(ptr.*);
@@ -407,7 +404,6 @@ pub const Collector = struct {
         }
 
         self.state_graph("// In [flip] after graying out roots \n");
-
         self.state_graph("// From after [flip] \n");
     }
 
@@ -481,6 +477,7 @@ pub const Collector = struct {
         }
     }
 
+    /// Save a graphviz file with the current state of the collector
     pub fn state_graph(self: *Collector, msg: []const u8) void {
         if (!DEBUG) return;
         var graphviz = std.fs.cwd().openFile("state_graph.dot", .{ .mode = .write_only }) catch @panic("Failed to open state_graph.dot");
@@ -493,7 +490,9 @@ pub const Collector = struct {
         defer content.deinit(allocator);
 
         const info = std.fmt.allocPrint(allocator, "// Last event: {}\n", .{self.event_queue.getLast()}) catch unreachable;
+        defer allocator.free(info);
         const name = std.fmt.allocPrint(allocator, "digraph Treadmill{d} {{\n", .{self.allocations}) catch unreachable;
+        defer allocator.free(name);
 
         content.appendSlice(allocator, info) catch unreachable;
         content.appendSlice(allocator, name) catch unreachable;
@@ -515,6 +514,7 @@ pub const Collector = struct {
             const obj: *GCObject = @fieldParentPtr("node", current);
             content.appendSlice(allocator, "\t") catch unreachable;
             const ptrToStr = std.fmt.allocPrint(allocator, "{d}", .{@intFromPtr(obj)}) catch unreachable;
+            defer allocator.free(ptrToStr);
             content.appendSlice(allocator, "n") catch unreachable;
             content.appendSlice(allocator, ptrToStr) catch unreachable;
             content.appendSlice(allocator, "\n") catch unreachable;
@@ -529,6 +529,7 @@ pub const Collector = struct {
         for (0..MAX_OBJECTS) |_| {
             const obj: *GCObject = @fieldParentPtr("node", current);
             const ptrAsStr = std.fmt.allocPrint(allocator, "{d}", .{@intFromPtr(obj)}) catch unreachable;
+            defer allocator.free(ptrAsStr);
             content.appendSlice(allocator, "n") catch unreachable;
             content.appendSlice(allocator, ptrAsStr) catch unreachable;
             content.appendSlice(allocator, " [label=\"") catch unreachable;
@@ -559,23 +560,6 @@ pub const Collector = struct {
             if (last_color == 3) {
                 content.appendSlice(allocator, "fillcolor=\"#00ff00\", ") catch unreachable;
             }
-
-            // if ((@intFromPtr(current) >= @intFromPtr(self.bottom)) and (@intFromPtr(current) < @intFromPtr(self.top))) {
-            //     // ecru color
-            //     content.appendSlice(allocator, "fillcolor=\"#ff0000\", ") catch unreachable;
-            // }
-            // if ((@intFromPtr(current) >= @intFromPtr(self.top)) and (@intFromPtr(current) < @intFromPtr(self.scan))) {
-            //     // gray color
-            //     content.appendSlice(allocator, "fillcolor=\"#888888\", ") catch unreachable;
-            // }
-            // if ((@intFromPtr(current) >= @intFromPtr(self.scan)) and (@intFromPtr(current) < @intFromPtr(self.free))) {
-            //     // black color
-            //     content.appendSlice(allocator, "fillcolor=\"#000000\", ") catch unreachable;
-            // }
-            // if ((@intFromPtr(current) >= @intFromPtr(self.free)) and (@intFromPtr(current) < @intFromPtr(self.bottom))) {
-            //     // white color
-            //     content.appendSlice(allocator, "fillcolor=\"#ffffff\", ") catch unreachable;
-            // }
             content.appendSlice(allocator, "];\n") catch unreachable;
             current = current.next.?;
         }
@@ -587,10 +571,12 @@ pub const Collector = struct {
             const obj: *GCObject = @fieldParentPtr("node", current);
             const next: *GCObject = @fieldParentPtr("node", current.next.?);
             const ptrAsStr = std.fmt.allocPrint(allocator, "{d}", .{@intFromPtr(obj)}) catch unreachable;
+            defer allocator.free(ptrAsStr);
             content.appendSlice(allocator, "n") catch unreachable;
             content.appendSlice(allocator, ptrAsStr) catch unreachable;
             content.appendSlice(allocator, " -> ") catch unreachable;
             const nextPtrAsStr = std.fmt.allocPrint(allocator, "{d}", .{@intFromPtr(next)}) catch unreachable;
+            defer allocator.free(nextPtrAsStr);
             content.appendSlice(allocator, "n") catch unreachable;
             content.appendSlice(allocator, nextPtrAsStr) catch unreachable;
             content.appendSlice(allocator, "\n") catch unreachable;
@@ -606,7 +592,10 @@ pub const Collector = struct {
                 const field = obj.field_at(i, &self.obj_to_void);
                 if (field != null) {
                     const objPtrAsStr = std.fmt.allocPrint(allocator, "{d}", .{@intFromPtr(obj)}) catch unreachable;
+                    defer allocator.free(objPtrAsStr);
                     const fieldPtrAsStr = std.fmt.allocPrint(allocator, "{d}", .{@intFromPtr(field.?)}) catch unreachable;
+                    defer allocator.free(fieldPtrAsStr);
+
                     content.appendSlice(allocator, "n") catch unreachable;
                     content.appendSlice(allocator, objPtrAsStr) catch unreachable;
                     content.appendSlice(allocator, " -> ") catch unreachable;
@@ -628,24 +617,28 @@ pub const Collector = struct {
         const bottom_obj: *GCObject = @fieldParentPtr("node", self.bottom);
         content.appendSlice(allocator, "bottom -> ") catch unreachable;
         const bottomAsStr = std.fmt.allocPrint(allocator, "{d}", .{@intFromPtr(bottom_obj)}) catch unreachable;
+        defer allocator.free(bottomAsStr);
         content.appendSlice(allocator, "n") catch unreachable;
         content.appendSlice(allocator, bottomAsStr) catch unreachable;
         content.appendSlice(allocator, "\n") catch unreachable;
         const scan_obj: *GCObject = @fieldParentPtr("node", self.scan);
         content.appendSlice(allocator, "scan -> ") catch unreachable;
         const scanAsStr = std.fmt.allocPrint(allocator, "{d}", .{@intFromPtr(scan_obj)}) catch unreachable;
+        defer allocator.free(scanAsStr);
         content.appendSlice(allocator, "n") catch unreachable;
         content.appendSlice(allocator, scanAsStr) catch unreachable;
         content.appendSlice(allocator, "\n") catch unreachable;
         const top_obj: *GCObject = @fieldParentPtr("node", self.top);
         content.appendSlice(allocator, "top -> ") catch unreachable;
         const topAsStr = std.fmt.allocPrint(allocator, "{d}", .{@intFromPtr(top_obj)}) catch unreachable;
+        defer allocator.free(topAsStr);
         content.appendSlice(allocator, "n") catch unreachable;
         content.appendSlice(allocator, topAsStr) catch unreachable;
         content.appendSlice(allocator, "\n") catch unreachable;
         const free_obj: *GCObject = @fieldParentPtr("node", self.free);
         content.appendSlice(allocator, "free -> ") catch unreachable;
         const freeAsStr = std.fmt.allocPrint(allocator, "{d}", .{@intFromPtr(free_obj)}) catch unreachable;
+        defer allocator.free(freeAsStr);
         content.appendSlice(allocator, "n") catch unreachable;
         content.appendSlice(allocator, freeAsStr) catch unreachable;
         content.appendSlice(allocator, "\n}\n") catch unreachable;

@@ -6,8 +6,10 @@ const runtime = @cImport({
     @cInclude("runtime.h");
 });
 
-const gc = @import("gc.zig");
+const collector = @import("collector.zig");
 const util = @import("util.zig");
+
+pub const gc = collector.Collector;
 
 //###==============================###
 //
@@ -23,21 +25,17 @@ const util = @import("util.zig");
 
 /// Global GC environment
 /// that is initialized on first use.
-var env: ?*gc.GCEnv = null;
+var env: ?*gc = null;
 
 /// Returns the global GC environment
 /// or initializes it if it hasn't been (on heap)
-fn get_env() !*gc.GCEnv {
+fn get_env() !*gc {
     if (env) |e| {
         return e;
     }
-    const allocator = std.heap.page_allocator;
-
-    // Allocate ENV
-    const gc_ptr = try allocator.create(gc.GCEnv);
 
     // Initialise ENV
-    gc_ptr.* = try gc.GCEnv.init();
+    const gc_ptr = try gc.init();
 
     // Store the pointer in global
     env = gc_ptr;
@@ -56,8 +54,7 @@ export fn gc_push_root(object: **void) void {
         @panic("Cannot initialize environment");
     };
     util.dbgs("Zig: gc_push_root {*}\n", .{object});
-
-    gc_env.push_root(object) catch unreachable;
+    gc_env.queue_roots(object);
 }
 
 export fn gc_alloc(size: usize) *void {
@@ -65,7 +62,9 @@ export fn gc_alloc(size: usize) *void {
         @panic("Cannot initialize environment");
     };
     util.dbgs("Zig: gc_alloc {d}\n", .{size});
-    const slice = gc_env.alloc(size) catch unreachable;
+    const slice = gc_env.alloca(size) catch {
+        @panic("Allocation failed");
+    };
     return @ptrCast(slice);
 }
 
@@ -86,7 +85,9 @@ export fn gc_pop_root(object: **void) void {
         @panic("Cannot initialize environment");
     };
     util.dbgs("Zig: gc_pop_root {*}\n", .{object});
-    _ = gc_env.pop_root(object) catch unreachable;
+    gc_env.pop_root(object) catch {
+        @panic("Failed to pop root");
+    };
 }
 
 export fn not_implemented() void {
@@ -104,8 +105,7 @@ export fn print_gc_alloc_stats() void {
         @panic("Cannot initialize environment");
     };
     util.dbgs("Zig: print_gc_alloc_stats\n", .{});
-    const allocs = gc_env.collector.allocations;
-    const flips = gc_env.collector.flips;
+    const allocs = gc_env.allocations;
+    const flips = gc_env.flips;
     std.debug.print("Stats: Allocations: {d}, Flips: {d}\n", .{ allocs, flips });
-    // gc_env.statistics.print();
 }
