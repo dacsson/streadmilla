@@ -105,7 +105,6 @@ export fn print_gc_alloc_stats() void {
         @panic("Cannot initialize environment");
     };
     util.dbgs("Zig: print_gc_alloc_stats\n", .{});
-    const allocs = gc_env.allocations;
-    const flips = gc_env.flips;
-    std.debug.print("Stats: Allocations: {d}, Flips: {d}\n", .{ allocs, flips });
+
+    gc_env.stats.print();
 }

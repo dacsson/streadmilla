@@ -17,6 +17,10 @@ else
 	ZIG_FLAGS += --release=small
 endif
 
+ifdef MAX_OBJECTS
+	ZIG_FLAGS += -Dmax_objects=$(MAX_OBJECTS)
+endif
+
 ifeq ($(STELLA_DEBUG),1)
 	ZIG_FLAGS += -Dstella-debug=true
 	C_FLAGS += -DSTELLA_DEBUG

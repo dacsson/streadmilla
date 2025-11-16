@@ -6,6 +6,7 @@ const util = @import("util.zig");
 const runtime = @cImport({
     @cInclude("runtime.h");
 });
+const stat = @import("stats.zig");
 
 const DEBUG = builtin.mode == .Debug;
 
@@ -84,7 +85,7 @@ pub const GCObject = struct {
 /// Maximum number of objects that can be allocated
 /// and put into a doubly linked list, which acts as a
 /// heap in this gc algorithm
-pub var MAX_OBJECTS: usize = 59;
+pub const MAX_OBJECTS: usize = @import("gc_config").MAX_OBJECTS;
 
 pub const Root = struct {
     /// Raw pointer to some objects
@@ -111,10 +112,9 @@ pub const Collector = struct {
     /// Still non-scanned objects are between bottom and top
     top: *std.DoublyLinkedList.Node,
     bottom: *std.DoublyLinkedList.Node,
-    allocations: usize,
     memory_size: usize,
     event_queue: std.ArrayList(Event),
-    flips: usize,
+    stats: stat.Statistics,
 
     pub fn init() !*Collector {
         const allocator = std.heap.page_allocator;
@@ -147,10 +147,9 @@ pub const Collector = struct {
             .scan = memory.first.?,
             .top = memory.first.?,
             .bottom = memory.first.?,
-            .allocations = 0,
             .memory_size = 0,
             .event_queue = std.ArrayList(Event).empty,
-            .flips = 0,
+            .stats = .{},
         };
 
         obj.event_queue.append(allocator, Event.NONE) catch {
@@ -194,7 +193,7 @@ pub const Collector = struct {
 
     /// Add the object to the treadmill list, before the head
     pub fn link(self: *Collector, head: *GCObject, object: *GCObject) void {
-        util.dbgs("\n[link] {}\n", .{self.allocations});
+        util.dbgs("\n[link] {}\n", .{self.stats.allocated_memory});
         const before_top: *GCObject = @fieldParentPtr("node", self.top);
         const before_scan: *GCObject = @fieldParentPtr("node", self.scan);
         const before_bottom: *GCObject = @fieldParentPtr("node", self.bottom);
@@ -257,7 +256,13 @@ pub const Collector = struct {
         }
     }
 
+    // This barrier guarantees that the mutator cannot violate
+    // the invariant simply because the mutator never sees ecru objects
+    // (which are grayed by the barrier) and hence cannot store pointers
+    // to them anywhere
+    // If the read barrier is present, the write barrier is not necessary
     pub fn read_barrier(self: *Collector, object: *void) void {
+        self.stats.barrier_reads += 1;
         util.dbgs("Searching object at address: {*} | {d}\n", .{ object, self.obj_to_void.count() });
         // Find corresponding GCObject
         const obj = self.obj_to_void.get(object);
@@ -268,6 +273,8 @@ pub const Collector = struct {
         }
     }
 
+    /// Take object at `free` and return pre-allocated row bytes.
+    /// Then either make it black or if it's a root - gray.
     pub fn alloca(self: *Collector, size: usize) ![]u8 {
         if ((@intFromPtr(self.free.next.?) == @intFromPtr(self.bottom))) {
             util.dbgs("\n\n -----------------before flip \n\n", .{});
@@ -281,7 +288,9 @@ pub const Collector = struct {
         const obj: *GCObject = @fieldParentPtr("node", self.free);
         obj.size = size;
 
-        self.allocations += 1;
+        self.stats.allocated_memory += size;
+        self.stats.allocated_objects += 1;
+
         self.free = self.free.next.?;
 
         // Allocating a root object means putting it
@@ -335,6 +344,7 @@ pub const Collector = struct {
         for (0..count) |i| {
             const field = scan.field_at(i, &self.obj_to_void);
             if (field != null) {
+                self.stats.memory_reads += 1;
                 if (self.is_ecru(field.?)) {
                     self.make_gray(field.?);
                 }
@@ -354,7 +364,7 @@ pub const Collector = struct {
     // Swap top and bottom pointers and redefine colours: the old black objects
     // are now ecru and the old ecru objects (they are garbage) are now white
     pub fn flip(self: *Collector) void {
-        self.flips += 1;
+        self.stats.flips += 1;
         self.state_graph("// From before [flip] \n");
         self.event_queue.append(self.allocator, Event.FLIP) catch unreachable;
 
@@ -369,6 +379,7 @@ pub const Collector = struct {
         var ecru = std.ArrayList(*GCObject).empty;
         var curr = self.bottom;
         while (@intFromPtr(curr) != @intFromPtr(self.top)) {
+            self.stats.memory_writes += 1;
             ecru.append(self.allocator, @fieldParentPtr("node", curr)) catch unreachable;
             curr = curr.next.?;
         }
@@ -383,6 +394,7 @@ pub const Collector = struct {
         // Slide bottom and reclassify remaining region to ecru
         self.bottom = self.top;
 
+        // black -> ecru
         var black_objs = std.ArrayList(*GCObject).empty;
         curr = self.scan;
         while (curr != self.free) {
@@ -491,7 +503,7 @@ pub const Collector = struct {
 
         const info = std.fmt.allocPrint(allocator, "// Last event: {}\n", .{self.event_queue.getLast()}) catch unreachable;
         defer allocator.free(info);
-        const name = std.fmt.allocPrint(allocator, "digraph Treadmill{d} {{\n", .{self.allocations}) catch unreachable;
+        const name = std.fmt.allocPrint(allocator, "digraph Treadmill{d} {{\n", .{self.stats.allocated_memory}) catch unreachable;
         defer allocator.free(name);
 
         content.appendSlice(allocator, info) catch unreachable;
